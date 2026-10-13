@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>KOSKAS — catatan uang anak kos</title>
+<script>try{var __t=localStorage.getItem('koskas:theme');if(__t==='light'||__t==='dark')document.documentElement.setAttribute('data-theme',__t);}catch(e){}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800;900&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -207,6 +208,18 @@ body{background-image:none}
 .badges{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:14px}
 .badge{padding:10px 2px;text-align:center;border:1.5px solid var(--line);border-radius:10px;color:var(--ink-2);font-size:13px;font-weight:600}
 .badge.on{background:var(--hl);border-color:var(--hl);color:var(--on-hl);font-weight:700}
+
+.seg.sm{margin:0;width:min(62%,240px)}
+.days{display:grid;grid-template-columns:repeat(auto-fill,minmax(34px,1fr));gap:6px;margin:14px 0 6px}
+.dc{display:grid;place-items:center;height:34px;border-radius:8px;border:1.5px solid var(--line);font-size:13px;font-weight:700;color:var(--ink-2)}
+.dc.o{background:var(--ink);border-color:var(--ink);color:var(--bg)}
+.dc.x{border-color:var(--bad);color:var(--bad)}
+.dc.t{box-shadow:0 0 0 2px var(--hl)}
+.clock{margin:12px 0 0;border:1.5px solid var(--line);border-radius:12px}
+.clock div{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:10px 12px}
+.clock div+div{border-top:1px solid var(--line)}
+.clock span{color:var(--ink-2);font-size:13px}
+.clock b{white-space:nowrap;font:800 18px var(--font-d);font-variant-numeric:tabular-nums;letter-spacing:0}
 </style>
 </head>
 <body>
@@ -292,9 +305,23 @@ const digits=s=>String(s).replace(/\D/g,'').slice(0,12);
 const fmtD=s=>{const d=digits(s);return d?nf.format(Number(d)):'';};
 const longDate=d=>d.getDate()+' '+MONTHS[d.getMonth()]+' '+d.getFullYear();
 
+/* ---------- tema ---------- */
+let themeMem='auto';
+function getTheme(){
+  const a=document.documentElement.getAttribute('data-theme');
+  return a==='light'||a==='dark'?a:themeMem==='auto'?'auto':themeMem;
+}
+function setTheme(m){
+  if(m!=='light'&&m!=='dark')m='auto';
+  themeMem=m;
+  if(m==='auto')document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme',m);
+  try{if(m==='auto')localStorage.removeItem('koskas:theme');else localStorage.setItem('koskas:theme',m);}catch(e){}
+}
+
 /* ---------- penyimpanan ---------- */
 let storageOk=true, memStore=null;
-function blank(){return {tx:[],budgets:{},goal:{name:'',target:0},payday:1,debts:[],challenge:{start:''}};}
+function blank(){return {tx:[],budgets:{},goal:{name:'',target:0},payday:1,debts:[],challenge:{start:'',days:7}};}
 function normalize(o){
   const b=blank();
   if(!o||typeof o!=='object') return b;
@@ -315,7 +342,11 @@ function normalize(o){
     b.debts=o.debts.filter(d=>d&&typeof d.amount==='number'&&d.amount>0&&/^\d{4}-\d{2}-\d{2}$/.test(String(d.date))&&['owe','lent'].indexOf(d.dir)>-1&&String(d.who||'').trim())
       .map(d=>({id:String(d.id||uid()),dir:d.dir,who:String(d.who).trim().slice(0,40),amount:Math.round(d.amount),note:String(d.note||'').slice(0,120),date:d.date,paid:!!d.paid,paidDate:(d.paid&&/^\d{4}-\d{2}-\d{2}$/.test(String(d.paidDate)))?d.paidDate:''}));
   }
-  if(o.challenge&&typeof o.challenge==='object'&&/^\d{4}-\d{2}-\d{2}$/.test(String(o.challenge.start))) b.challenge.start=o.challenge.start;
+  if(o.challenge&&typeof o.challenge==='object'&&/^\d{4}-\d{2}-\d{2}$/.test(String(o.challenge.start))){
+    b.challenge.start=o.challenge.start;
+    const cd=parseInt(o.challenge.days,10);
+    b.challenge.days=(cd>=1&&cd<=90)?cd:30;
+  }
   return b;
 }
 function load(){
@@ -333,7 +364,7 @@ function persist(){
 
 /* ---------- state ---------- */
 let db=load();
-const ui={tab:'home',month:ymOf(new Date()),sheet:null,wipe:false,chalReset:false,split:{total:'',n:2,pct:'',round:1,names:''}};
+const ui={tab:'home',month:ymOf(new Date()),sheet:null,wipe:false,chalReset:false,chalCancel:false,chalDays:7,split:{total:'',n:2,pct:'',taxRp:'',taxMode:'pct',round:1,names:''}};
 let form=null,dform=null,lastFocus=null,tt=null;
 
 /* ---------- hitungan ---------- */
@@ -482,27 +513,56 @@ const BADGES=[3,7,14,30];
 function shortDate(ds){const d=parseISO(ds);return d.getDate()+' '+MON3[d.getMonth()];}
 function chalStats(now){
   const st=db.challenge.start;if(!st) return null;
-  const s0=parseISO(st),t0=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+  const N=db.challenge.days||30,s0=parseISO(st),t0=new Date(now.getFullYear(),now.getMonth(),now.getDate());
   if(s0>t0) return null;
   const dirty={};db.tx.forEach(t=>{if(t.type==='out'&&t.cat==='nongkrong')dirty[t.date]=1;});
-  let run=0,best=0;
-  for(let d=new Date(s0);d<=t0;d.setDate(d.getDate()+1)){
-    if(dirty[isoDate(d)]) run=0;else{run++;if(run>best)best=run;}
+  const n=Math.round((t0-s0)/864e5)+1;
+  let run=0,best=0,clean=0;const cells=[];
+  for(let i=0;i<N;i++){
+    const iso=isoDate(new Date(s0.getFullYear(),s0.getMonth(),s0.getDate()+i));
+    if(i+1>n){cells.push('f');continue;}
+    const bad=!!dirty[iso];
+    if(bad)run=0;else{run++;clean++;if(run>best)best=run;}
+    cells.push((bad?'x':'o')+(i+1===n?' t':''));
   }
-  return {cur:run,best:best};
+  return {N:N,n:n,cur:run,best:best,clean:clean,cells:cells,done:n>N};
 }
 function chalHTML(){
   const c=chalStats(new Date());
-  if(!c) return '<section class="sec"><h2>Tantangan tanpa jajan</h2><p class="p">Berapa hari kamu bisa bertahan tanpa pengeluaran kategori Nongkrong? Hitungannya otomatis dari catatanmu.</p><button class="btn primary" data-act="chal-start">Mulai tantangan</button></section>';
-  const next=BADGES.find(b=>b>c.cur),pct=next?c.cur/next*100:100;
-  const msg=c.cur>0?(next?'Target berikutnya '+next+' hari, tinggal '+(next-c.cur)+' hari lagi.':'Semua lencana sudah terkumpul.'):'Hari ini ada pengeluaran Nongkrong, hitungan mulai lagi besok.';
+  if(!c){
+    const opts=[7,14,30].map(d=>'<button type="button" role="radio" aria-checked="'+(ui.chalDays===d)+'" class="chip'+(ui.chalDays===d?' on':'')+'" data-act="chal-days" data-d="'+d+'">'+d+' hari</button>').join('');
+    return '<section class="sec"><h2>Tantangan tanpa jajan</h2><p class="p">Bertahan tanpa pengeluaran kategori Nongkrong. Pilih lamanya, lalu hitung mundurnya berjalan otomatis dari catatanmu.</p><div class="chips" role="radiogroup" aria-label="Lama tantangan">'+opts+'</div><button class="btn primary" data-act="chal-start">Mulai tantangan</button></section>';
+  }
+  const left=Math.max(0,c.N-c.n),todayBad=!c.done&&c.cells[c.n-1].charAt(0)==='x';
+  const big=c.done?'<span class="hl">Selesai</span>':'<span class="hl">'+left+'</span> hari lagi';
+  const sub=c.done?c.clean+' dari '+c.N+' hari bersih tanpa Nongkrong.':(left===0?'Hari terakhir, tahan sampai malam!':'Hari ke-'+c.n+' dari '+c.N+'.')+(todayBad?' Hari ini ada pengeluaran Nongkrong, jadi hari ini tidak bersih.':'');
+  const cells=c.cells.map((k,i)=>{
+    const st=k.charAt(0),sym=st==='o'?'✓':st==='x'?'✕':String(i+1);
+    return '<span class="dc '+k+'">'+sym+'</span>';
+  }).join('');
   const badges=BADGES.map(b=>'<div class="badge'+(c.best>=b?' on':'')+'">'+(c.best>=b?'✓ ':'')+b+' hari</div>').join('');
-  return '<section class="sec"><h2>Tantangan tanpa jajan</h2><div class="goal"><p class="hero-l">Hari berturut-turut tanpa pengeluaran Nongkrong</p>'+
-    '<p class="big"><span class="hl">'+c.cur+'</span> hari</p>'+
-    '<div class="track" role="img" aria-label="'+Math.round(pct)+' persen menuju target berikutnya"><div class="fill" style="width:'+pct+'%"></div></div>'+
-    '<p class="pace-note">'+msg+'</p><div class="badges">'+badges+'</div>'+
-    '<div class="pace-row"><span>Terbaik: '+c.best+' hari</span><span>Sejak '+shortDate(db.challenge.start)+'</span></div>'+
-    '<button class="btn ghost block" style="margin-top:12px" data-act="chal-reset">'+(ui.chalReset?'Yakin mulai ulang dari hari ini?':'Mulai ulang tantangan')+'</button></div></section>';
+  const label='Hari bersih '+c.clean+' dari '+c.N+'. Centang berarti bersih, silang berarti ada pengeluaran Nongkrong.';
+  return '<section class="sec"><h2>Tantangan tanpa jajan</h2><div class="goal"><p class="hero-l">Hitung mundur tantangan '+c.N+' hari tanpa Nongkrong</p>'+
+    '<p class="big">'+big+'</p><p class="pace-note">'+sub+'</p>'+
+    (c.done?'':'<div class="clock" aria-hidden="true"><div><span>Hari ini berakhir</span><b id="ckDay">--:--:--</b></div><div><span>Tantangan selesai</span><b id="ckAll">--</b></div></div>')+
+    '<div class="days" role="img" aria-label="'+label+'">'+cells+'</div>'+
+    '<div class="pace-row"><span>Beruntun saat ini: '+c.cur+' hari</span><span>Terbaik: '+c.best+' hari</span></div>'+
+    '<div class="badges">'+badges+'</div>'+
+    '<div class="actions" style="margin-top:14px"><button class="btn ghost" data-act="chal-reset">'+(ui.chalReset?'Yakin ulang?':'Mulai ulang')+'</button>'+
+    '<button class="btn danger" data-act="chal-cancel">'+(ui.chalCancel?'Yakin batal?':'Batalkan')+'</button></div></div></section>';
+}
+let chalDay=isoDate(new Date());
+function tickChal(){
+  const now=new Date(),iso=isoDate(now);
+  if(iso!==chalDay){chalDay=iso;if(ui.tab==='home'&&!ui.sheet){render();return;}}
+  const a=$('ckDay'),b=$('ckAll');
+  if(!a||!b||!db.challenge.start) return;
+  const s0=parseISO(db.challenge.start),N=db.challenge.days||30;
+  const dayEnd=new Date(now.getFullYear(),now.getMonth(),now.getDate()+1),allEnd=new Date(s0.getFullYear(),s0.getMonth(),s0.getDate()+N);
+  const hms=ms=>{const t=Math.max(0,Math.floor(ms/1000));return pad(Math.floor(t%86400/3600))+':'+pad(Math.floor(t%3600/60))+':'+pad(t%60);};
+  a.textContent=hms(dayEnd-now);
+  const left=allEnd-now,dd=Math.floor(left/864e5);
+  b.textContent=(dd>0?dd+' hari ':'')+hms(left);
 }
 function ageText(ds){
   const t=new Date(),n=Math.round((new Date(t.getFullYear(),t.getMonth(),t.getDate())-parseISO(ds))/864e5);
@@ -532,14 +592,15 @@ function splitCalc(){
   const sp=ui.split,total=parseInt(sp.total,10)||0;
   if(total<=0) return null;
   const pct=parseInt(sp.pct,10)||0,n=sp.n,step=sp.round||1;
-  const tot=Math.round(total*(1+pct/100)),per=Math.ceil(tot/n/step)*step;
-  return {pct:pct,tot:tot,per:per,extra:per*n-tot,n:n};
+  const tax=sp.taxMode==='rp'?(parseInt(sp.taxRp,10)||0):Math.round(total*pct/100);
+  const tot=total+tax,per=Math.ceil(tot/n/step)*step;
+  return {mode:sp.taxMode,pct:pct,tax:tax,tot:tot,per:per,extra:per*n-tot,n:n};
 }
 function splitOutHTML(){
   const r=splitCalc();
   if(!r) return '<p class="p">Isi total tagihan untuk melihat bagian tiap orang.</p>';
   return '<div class="goal"><p class="hero-l">Tiap orang bayar</p><p class="big"><span class="hl">'+rp(r.per)+'</span></p>'+
-    '<div class="pace-row"><span>'+(r.pct>0?'Tagihan + '+r.pct+'% pajak atau servis':'Total tagihan')+'</span><span>'+rp(r.tot)+'</span></div>'+
+    '<div class="pace-row"><span>'+(r.tax>0?(r.mode==='pct'?'Tagihan + '+r.pct+'% pajak atau servis ('+rp(r.tax)+')':'Tagihan + pajak atau servis '+rp(r.tax)):'Total tagihan')+'</span><span>'+rp(r.tot)+'</span></div>'+
     '<div class="pace-row"><span>'+r.n+' orang</span><span>'+(r.extra>0?'Kelebihan pembulatan '+rp(r.extra):'Pas, tanpa kelebihan')+'</span></div>'+
     '<button class="btn primary block" style="margin-top:14px" data-act="split-mine">Catat bagianku sebagai pengeluaran</button></div>';
 }
@@ -549,7 +610,8 @@ function splitHTML(){
   return '<section class="sec"><h2>Bagi tagihan</h2><p class="p">Hitung patungan makan, listrik, atau iuran kos.</p><div class="grp">'+
     '<div class="fld"><label for="sTotal">Total tagihan</label><input id="sTotal" class="field sm money" inputmode="numeric" autocomplete="off" placeholder="0" value="'+fmtD(sp.total)+'"></div>'+
     '<div class="fld"><span id="sNLabel">Jumlah orang (termasuk kamu)</span><div class="stepper" role="group" aria-labelledby="sNLabel"><button class="ib" data-act="split-n" data-d="-1" aria-label="Kurangi satu orang">−</button><b id="sN" aria-live="polite">'+sp.n+'</b><button class="ib" data-act="split-n" data-d="1" aria-label="Tambah satu orang">+</button></div></div>'+
-    '<div class="fld"><label for="sPct">Pajak atau servis (%)</label><input id="sPct" class="field sm money" inputmode="numeric" autocomplete="off" maxlength="2" placeholder="0" value="'+esc(sp.pct)+'"></div>'+
+    '<div class="fld"><span id="sTaxLabel">Pajak atau servis</span><div class="seg two sm" role="radiogroup" aria-labelledby="sTaxLabel">'+[['pct','Persen'],['rp','Sesuai struk']].map(p=>'<button type="button" role="radio" aria-checked="'+(sp.taxMode===p[0])+'" class="'+(sp.taxMode===p[0]?'on':'')+'" data-act="split-tax" data-m="'+p[0]+'">'+p[1]+'</button>').join('')+'</div></div>'+
+    '<div class="fld"><label for="sTax">'+(sp.taxMode==='pct'?'Besar pajak atau servis (%)':'Total pajak atau servis (Rp)')+'</label><input id="sTax" class="field sm money" inputmode="numeric" autocomplete="off" placeholder="0" value="'+(sp.taxMode==='pct'?esc(sp.pct):fmtD(sp.taxRp))+'"></div>'+
     '<div class="fld"><label for="sRound">Bulatkan ke atas</label><select id="sRound" class="field sm">'+ro+'</select></div></div></section>'+
     '<section class="sec" id="splitOut">'+splitOutHTML()+'</section>'+
     '<section class="sec"><h2>Kamu yang talangi dulu?</h2><p class="p">Tulis nama teman yang belum bayar, pisahkan dengan koma. Tiap nama dicatat sebagai piutang sebesar bagiannya.</p>'+
@@ -583,12 +645,15 @@ function setHTML(){
   let pd='';
   for(let i=1;i<=28;i++) pd+='<option value="'+i+'"'+(db.payday===i?' selected':'')+'>'+i+'</option>';
   const buds=OUT.map(c=>'<div class="fld"><label for="b-'+c.id+'">'+c.e+' '+esc(c.n)+'</label><input id="b-'+c.id+'" class="field sm money" inputmode="numeric" autocomplete="off" placeholder="Tanpa batas" value="'+(db.budgets[c.id]?nf.format(db.budgets[c.id]):'')+'" data-bind="budget:'+c.id+'"></div>').join('');
-  return '<section class="sec"><h2>Uang bulanan</h2><div class="grp"><div class="fld"><label for="sPay">Biasanya uang masuk tanggal</label><select id="sPay" class="field sm" data-bind="payday">'+pd+'</select></div></div><p class="p" style="margin-top:8px">Dipakai untuk memperkirakan apakah uangmu cukup sampai uang masuk berikutnya.</p></section>'+
+  const th=getTheme();
+  return '<section class="sec"><h2>Tampilan</h2><p class="p">Putih adalah latar putih dengan huruf hitam. Hitam kebalikannya. Otomatis mengikuti pengaturan HP.</p><div class="seg" role="radiogroup" aria-label="Tema tampilan" style="margin-top:0">'+
+      [['auto','Otomatis'],['light','Putih'],['dark','Hitam']].map(p=>'<button type="button" role="radio" aria-checked="'+(th===p[0])+'" class="'+(th===p[0]?'on':'')+'" data-act="theme" data-m="'+p[0]+'">'+p[1]+'</button>').join('')+'</div></section>'+
+    '<section class="sec"><h2>Uang bulanan</h2><div class="grp"><div class="fld"><label for="sPay">Biasanya uang masuk tanggal</label><select id="sPay" class="field sm" data-bind="payday">'+pd+'</select></div></div><p class="p" style="margin-top:8px">Dipakai untuk memperkirakan apakah uangmu cukup sampai uang masuk berikutnya.</p></section>'+
     '<section class="sec"><h2>Batas pengeluaran per bulan</h2><p class="p">Kosongkan kalau tidak mau memakai batas.</p><div class="grp">'+buds+'</div></section>'+
     '<section class="sec"><h2>Target tabungan</h2><div class="grp">'+
       '<div class="fld"><label for="gName">Untuk apa</label><input id="gName" class="field sm" maxlength="40" placeholder="Misal: laptop" value="'+esc(db.goal.name)+'" data-bind="goal-name"></div>'+
       '<div class="fld"><label for="gTarget">Jumlah target</label><input id="gTarget" class="field sm money" inputmode="numeric" autocomplete="off" placeholder="0" value="'+(db.goal.target?nf.format(db.goal.target):'')+'" data-bind="goal-target"></div></div></section>'+
-    '<section class="sec"><h2>Unduh dan cadangan</h2><p class="p">Catatan tersimpan di browser HP ini saja. Unduh cadangan secara berkala supaya tidak hilang kalau data browser terhapus. PDF berisi ringkasan, pengeluaran per kategori, dan rincian transaksi lengkap dengan identitasmu.</p>'+
+    '<section class="sec"><h2>Unduh dan cadangan</h2><p class="p">Catatan tersimpan di browser HP ini saja. Unduh cadangan secara berkala supaya tidak hilang kalau data browser terhapus. PDF berisi ringkasan, pengeluaran per kategori, rincian transaksi, dan daftar utang piutang dengan kotak centang lunas, lengkap dengan identitasmu.</p>'+
       '<div class="btnrow"><button class="btn primary block" data-act="pdf-month">Unduh laporan '+monthLabel(ui.month)+' (PDF)</button>'+
       '<button class="btn ghost block" data-act="pdf-all">Unduh laporan semua bulan (PDF)</button>'+
       '<button class="btn ghost block" data-act="dl-month">Unduh '+monthLabel(ui.month)+' (CSV)</button>'+
@@ -613,6 +678,7 @@ function render(){
   document.querySelector('.month').style.visibility=(ui.tab==='debt'||ui.tab==='split')?'hidden':'visible';
   const warn=storageOk?'':'<div class="warnbox">Penyimpanan browser tidak aktif, jadi catatan hilang saat halaman ditutup. Unduh cadangan di tab Atur sebelum keluar.</div>';
   $('view').innerHTML=warn+(ui.tab==='home'?homeHTML():ui.tab==='hist'?histHTML():ui.tab==='debt'?debtHTML():ui.tab==='split'?splitHTML():setHTML())+idHTML();
+  tickChal();
 }
 
 /* ---------- form catat ---------- */
@@ -776,6 +842,42 @@ function buildPDF(months,title){
     y+=26;
   });
 
+  /* seksi utang piutang */
+  if(db.debts.length){
+    const ds=db.debts.slice().sort((a,b)=>((a.paid?1:0)-(b.paid?1:0))||(a.date<b.date?-1:a.date>b.date?1:0));
+    const open=ds.filter(d=>!d.paid);
+    const lent=open.filter(d=>d.dir==='lent').reduce((a,d)=>a+d.amount,0),owe=open.filter(d=>d.dir==='owe').reduce((a,d)=>a+d.amount,0);
+    ensure(190);
+    T(PM,y,'Utang piutang',16,{b:1,c:'#111111'});y+=8;
+    L(PM,y,PW-PM,y,'#D7191F',2);y+=20;
+    [['Teman belum bayar ke kamu',rpP(lent),'#111111'],['Kamu belum bayar ke teman',rpP(owe),owe>0?'#D7191F':'#111111'],['Sudah lunas',(ds.length-open.length)+' dari '+ds.length+' catatan','#111111']].forEach(r=>{
+      T(PM,y,r[0],10,{c:'#595959'});T(PW-PM,y,r[1],10.5,{a:'r',b:1,c:r[2]});
+      y+=5;L(PM,y,PW-PM,y,'#DEDEDE',0.5);y+=14;
+    });
+    y+=6;T(PM,y,'Kotak tercentang = sudah lunas. Kotak kosong = belum lunas.',9,{c:'#595959'});y+=24;
+    const dHead=()=>{
+      R(PM,y-11,PW-2*PM,18,'#EBEBEB');
+      T(PM+6,y+1.5,'Lunas',8.5,{b:1});T(86,y+1.5,'Tanggal',8.5,{b:1});T(154,y+1.5,'Nama',8.5,{b:1});
+      T(252,y+1.5,'Jenis',8.5,{b:1});T(314,y+1.5,'Catatan',8.5,{b:1});T(PW-PM-6,y+1.5,'Jumlah',8.5,{b:1,a:'r'});
+      y+=18;
+    };
+    dHead();
+    ds.forEach((d,i)=>{
+      if(y+16>PMAX){newPage();dHead();}
+      if(i%2===1)R(PM,y-10.5,PW-2*PM,16,'#F7F7F7');
+      const bx=50,by=y-8.5,g=d.paid?'#8A8A8A':'#111111',dt=parseISO(d.date);
+      R(bx,by,9,9,'#111111');R(bx+1,by+1,7,7,'#FFFFFF');
+      if(d.paid){L(bx+1.9,by+4.7,bx+3.8,by+6.7,'#111111',1.5);L(bx+3.8,by+6.7,bx+7.4,by+2.3,'#111111',1.5);}
+      T(86,y,dt.getDate()+' '+MON3[dt.getMonth()]+' '+dt.getFullYear(),8.5,{c:g});
+      T(154,y,pFit(d.who,92,8.5),8.5,{c:g});
+      T(252,y,d.dir==='lent'?'Dia utang':'Kamu utang',8.5,{c:g});
+      T(314,y,pFit(d.note||'-',150,8.5),8.5,{c:d.note?g:'#8A8A8A'});
+      T(PW-PM-6,y,(d.dir==='lent'?'+':'-')+rpP(d.amount),8.5,{a:'r',b:1,c:d.paid?'#8A8A8A':(d.dir==='lent'?'#111111':'#D7191F')});
+      y+=16;
+    });
+    y+=26;
+  }
+
   /* footer di setiap halaman */
   pages.forEach((pg,i)=>{
     c=pg;
@@ -879,7 +981,7 @@ document.addEventListener('click',e=>{
   const el=e.target.closest('[data-act]');
   if(!el)return;
   const a=el.dataset.act;
-  if(a==='tab'){ui.tab=el.dataset.tab;ui.wipe=false;ui.chalReset=false;render();window.scrollTo(0,0);}
+  if(a==='tab'){ui.tab=el.dataset.tab;ui.wipe=false;ui.chalReset=false;ui.chalCancel=false;render();window.scrollTo(0,0);}
   else if(a==='prev'){ui.month=shiftMonth(ui.month,-1);render();}
   else if(a==='next'){if(ui.month<ymOf(new Date())){ui.month=shiftMonth(ui.month,1);render();}}
   else if(a==='add'){openForm(null);}
@@ -949,11 +1051,18 @@ document.addEventListener('click',e=>{
     names.forEach(n=>db.debts.push({id:uid(),dir:'lent',who:n.slice(0,40),amount:r.per,note:'Bagi tagihan',date:today,paid:false,paidDate:''}));
     persist();ui.split.names='';ui.tab='debt';render();window.scrollTo(0,0);toast(names.length+' piutang dicatat.');
   }
-  else if(a==='chal-start'){db.challenge.start=isoDate(new Date());persist();render();toast('Tantangan dimulai. Semangat!');}
+  else if(a==='theme'){setTheme(el.dataset.m);render();}
+  else if(a==='chal-days'){ui.chalDays=parseInt(el.dataset.d,10)||7;render();}
+  else if(a==='chal-start'){db.challenge.start=isoDate(new Date());db.challenge.days=ui.chalDays;persist();render();toast('Tantangan dimulai. Semangat!');}
   else if(a==='chal-reset'){
-    if(!ui.chalReset){ui.chalReset=true;render();return;}
+    if(!ui.chalReset){ui.chalReset=true;ui.chalCancel=false;render();return;}
     db.challenge.start=isoDate(new Date());persist();ui.chalReset=false;render();toast('Tantangan dimulai ulang.');
   }
+  else if(a==='chal-cancel'){
+    if(!ui.chalCancel){ui.chalCancel=true;ui.chalReset=false;render();return;}
+    db.challenge.start='';persist();ui.chalCancel=false;render();toast('Tantangan dibatalkan.');
+  }
+  else if(a==='split-tax'){ui.split.taxMode=el.dataset.m==='rp'?'rp':'pct';render();}
   else if(a==='copy'){copyExport();}
 });
 
@@ -970,7 +1079,11 @@ document.addEventListener('input',e=>{
   else if(t.id==='dNote'&&dform)dform.note=t.value;
   else if(t.id==='dDate'&&dform)dform.date=t.value;
   else if(t.id==='sTotal'){ui.split.total=digits(t.value);t.value=fmtD(ui.split.total);$('splitOut').innerHTML=splitOutHTML();}
-  else if(t.id==='sPct'){ui.split.pct=digits(t.value).slice(0,2);t.value=ui.split.pct;$('splitOut').innerHTML=splitOutHTML();}
+  else if(t.id==='sTax'){
+    if(ui.split.taxMode==='pct'){ui.split.pct=digits(t.value).slice(0,2);t.value=ui.split.pct;}
+    else{ui.split.taxRp=digits(t.value);t.value=fmtD(ui.split.taxRp);}
+    $('splitOut').innerHTML=splitOutHTML();
+  }
   else if(t.id==='sNames')ui.split.names=t.value;
   else if(t.classList&&t.classList.contains('money'))t.value=fmtD(t.value);
 });
@@ -1006,6 +1119,7 @@ document.addEventListener('change',e=>{
 
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&ui.sheet)closeSheet();});
 
+setInterval(tickChal,1000);
 render();
 })();
 </script>
